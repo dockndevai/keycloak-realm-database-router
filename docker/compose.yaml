@@ -1,0 +1,95 @@
+name: kc-realm-router
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+      POSTGRES_DB: keycloak
+    command:
+      - postgres
+      - -c
+      - max_connections=400
+      - -c
+      - shared_buffers=512MB
+    volumes:
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  pgbouncer:
+    image: edoburu/pgbouncer:${PGBOUNCER_TAG:-v1.26.0-p0}
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  keycloak:
+    build:
+      context: ..
+      dockerfile: docker/keycloak/Dockerfile
+    image: keycloak-realm-router:local
+    environment:
+      # Catalog database (master realm + REALM_DATASOURCE mapping table)
+      KC_DB_URL: jdbc:postgresql://pgbouncer:6432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KC_DB_POOL_MAX_SIZE: "40"
+      # Tenant databases, one named datasource each (vendor fixed at build time, see Dockerfile)
+      KC_DB_URL_FULL_ALPHA: jdbc:postgresql://pgbouncer:6432/kc_alpha
+      KC_DB_USERNAME_ALPHA: keycloak
+      KC_DB_PASSWORD_ALPHA: keycloak
+      KC_DB_POOL_MAX_SIZE_ALPHA: "40"
+      KC_DB_URL_FULL_BETA: jdbc:postgresql://pgbouncer:6432/kc_beta
+      KC_DB_USERNAME_BETA: keycloak
+      KC_DB_PASSWORD_BETA: keycloak
+      KC_DB_POOL_MAX_SIZE_BETA: "40"
+      KC_DB_URL_FULL_GAMMA: jdbc:postgresql://pgbouncer:6432/kc_gamma
+      KC_DB_USERNAME_GAMMA: keycloak
+      KC_DB_PASSWORD_GAMMA: keycloak
+      KC_DB_POOL_MAX_SIZE_GAMMA: "40"
+      # Router
+      KC_SPI_CONNECTIONS_JPA__ROUTING__DATASOURCES: alpha,beta,gamma
+      KC_SPI_CONNECTIONS_JPA__ROUTING__RULES: "alpha:^alpha$$;beta:^beta$$;gamma:^gamma$$"
+      KC_SPI_CONNECTIONS_JPA__ROUTING__PLACEMENT: default
+      # Server
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_LOG_LEVEL: info,com.ankitverma.keycloak.router:debug
+      JAVA_OPTS_APPEND: -Xms1g -Xmx2g
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+    depends_on:
+      pgbouncer:
+        condition: service_started
+    restart: unless-stopped
+
+  k6:
+    image: grafana/k6:${K6_TAG:-latest}
+    profiles: ["load"]
+    environment:
+      KC_URL: http://keycloak:8080
+      REALMS: alpha,beta,gamma
+      VUS_PER_REALM: "${VUS_PER_REALM:-20}"
+      DURATION: "${DURATION:-60s}"
+      GRANT: "${GRANT:-password}"
+      USERS_PER_REALM: "${USERS_PER_REALM:-200}"
+    volumes:
+      - ../load:/scripts
+      - ../load/results:/results
+    command: ["run", "/scripts/login.js"]
+
+volumes:
+  pgdata:
