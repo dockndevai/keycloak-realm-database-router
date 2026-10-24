@@ -112,6 +112,18 @@ public final class RealmRouter {
         LOG.infof("Realm '%s' (%s) placed on datasource '%s'", realmName, realmId, key);
     }
 
+    /** Keeps the catalog row and the {@code BY_NAME} cache in sync with a realm rename. */
+    public static void renameRealm(KeycloakSession session, String realmId, String oldName, String newName, String key) {
+        EntityManager em = catalogEntityManager(session);
+        em.createNativeQuery("UPDATE " + TABLE + " SET REALM_NAME = :newName WHERE REALM_ID = :id")
+                .setParameter("newName", newName)
+                .setParameter("id", realmId)
+                .executeUpdate();
+        forgetName(oldName);
+        cache(realmId, newName, key);
+        LOG.infof("Realm %s renamed from '%s' to '%s' on datasource '%s'", realmId, oldName, newName, key);
+    }
+
     public static void unregister(KeycloakSession session, String realmId) {
         EntityManager em = catalogEntityManager(session);
         em.createNativeQuery("DELETE FROM " + TABLE + " WHERE REALM_ID = :id")
