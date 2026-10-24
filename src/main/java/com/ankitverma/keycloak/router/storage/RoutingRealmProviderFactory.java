@@ -57,36 +57,40 @@ public class RoutingRealmProviderFactory implements RealmProviderFactory, Provid
         String key = RealmPlacement.choose(session, name);
         RealmModel realm = proxy.on(key, delegate -> id == null ? delegate.createRealm(name) : delegate.createRealm(id, name));
         RealmRouter.register(session, realm.getId(), name, key);
-        return realm;
+        return RealmNameSyncProxy.wrap(realm, session, key);
     }
 
     private static Object getRealm(RoutingProxy<RealmProvider> proxy, java.lang.reflect.Method method, Object[] args) {
         KeycloakSession session = proxy.session();
         String id = (String) args[0];
         RealmRouter.Resolution resolution = RealmRouter.resolveById(session, id);
-        RealmModel realm = proxy.on(resolution.key(), delegate -> delegate.getRealm(id));
+        String key = resolution.key();
+        RealmModel realm = proxy.on(key, delegate -> delegate.getRealm(id));
         if (realm == null && resolution.cached()) {
             // The cached mapping may be stale (realm moved or created on another node): re-read the catalog once.
             String fresh = RealmRouter.refreshById(session, id);
             if (!fresh.equals(resolution.key())) {
                 realm = proxy.on(fresh, delegate -> delegate.getRealm(id));
+                key = fresh;
             }
         }
-        return realm;
+        return RealmNameSyncProxy.wrap(realm, session, key);
     }
 
     private static Object getRealmByName(RoutingProxy<RealmProvider> proxy, java.lang.reflect.Method method, Object[] args) {
         KeycloakSession session = proxy.session();
         String name = (String) args[0];
         RealmRouter.Resolution resolution = RealmRouter.resolveByName(session, name);
-        RealmModel realm = proxy.on(resolution.key(), delegate -> delegate.getRealmByName(name));
+        String key = resolution.key();
+        RealmModel realm = proxy.on(key, delegate -> delegate.getRealmByName(name));
         if (realm == null && resolution.cached()) {
             String fresh = RealmRouter.refreshByName(session, name);
             if (!fresh.equals(resolution.key())) {
                 realm = proxy.on(fresh, delegate -> delegate.getRealmByName(name));
+                key = fresh;
             }
         }
-        return realm;
+        return RealmNameSyncProxy.wrap(realm, session, key);
     }
 
     private static Object removeRealm(RoutingProxy<RealmProvider> proxy, java.lang.reflect.Method method, Object[] args) {
